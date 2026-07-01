@@ -47,6 +47,7 @@ hashbrown = { version = "0.13", default-features = false }
 possiblyrandom = { version = "0.2", path = "../possiblyrandom", default-features = false }
 
 regex = { version = "1.5.6", optional = true }
+secp256k1_musig = { package="secp256k1", default-features = false, version = "0.32.0-beta.2" }
 backtrace = { version = "0.3", optional = true }
 
 libm = { version = "0.2", default-features = false }
