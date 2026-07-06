@@ -1,5 +1,7 @@
 //! Eltoo wire messages
 
+use core::ops::Deref;
+
 use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Txid};
@@ -7,13 +9,18 @@ use bitcoin::{Amount, OutPoint, ScriptBuf, Txid};
 use secp256k1_musig::musig;
 
 use crate::io;
-use crate::ln::msgs::{ClosingSignedFeeRange, DecodeError};
 use crate::ln::types::ChannelId;
 use crate::prelude::*;
 use crate::types::features::ChannelTypeFeatures;
 
+use crate::ln::msgs::{
+    AnnouncementSignatures, BaseMessageHandler, ClosingSignedFeeRange, DecodeError,
+    ErrorMessage, UpdateAddHTLC, UpdateFailHTLC, UpdateFailMalformedHTLC, UpdateFulfillHTLC,
+};
+
 use crate::util::ser::{
-	LengthLimitedRead, LengthReadable, Readable, WithoutLength, Writeable, Writer,
+	BigSize, FixedLengthReader, HighZeroBytesDroppedBigSize, Hostname, LengthLimitedRead,
+	LengthReadable, LengthReadableArgs, Readable, ReadableArgs, WithoutLength, Writeable, Writer,
 };
 
 /// An [`open_channel_eltoo`] message to be sent to or received from a peer.
@@ -403,3 +410,153 @@ impl_writeable_msg!(ChannelReestablish, {
 	update_partial_signature,
 	fresh_nonce,
 }, {});
+
+// XXX: Cargo culting the handler pattern from the existing peer manager code, hopefully that will
+// prove prudent.
+// XXX: Waffling on keeping the _eltoo suffix on ambiguous methods. On the one hand it will make
+// things clearer, but on the other hand it's kind of noise in all of the contexts I can think of.
+pub trait ChannelMessageHandler: BaseMessageHandler {
+	// Channel init:
+	/// Handle an incoming `open_channel_eltoo` message from the given peer.
+	fn handle_open_channel_eltoo(&self, their_node_id: PublicKey, msg: &OpenChannel);
+	/// Handle an incoming `accept_channel_eltoo` message from the given peer.
+	fn handle_accept_channel_eltoo(&self, their_node_id: PublicKey, msg: &AcceptChannel);
+
+	/// Handle an incoming `funding_created_eltoo` message from the given peer.
+	fn handle_funding_created_eltoo(&self, their_node_id: PublicKey, msg: &FundingCreated);
+	/// Handle an incoming `funding_signed_eltoo` message from the given peer.
+	fn handle_funding_signed_eltoo(&self, their_node_id: PublicKey, msg: &FundingSigned);
+
+	/// Handle an incoming `channel_ready_eltoo` message from the given peer.
+	fn handle_channel_ready_eltoo(&self, their_node_id: PublicKey, msg: &ChannelReady);
+
+	// Channel close:
+	/// Handle an incoming `shutdown_eltoo` message from the given peer.
+	fn handle_shutdown_eltoo(&self, their_node_id: PublicKey, msg: &Shutdown);
+	/// Handle an incoming `closing_signed_eltoo` message from the given peer.
+	fn handle_closing_signed_eltoo(&self, their_node_id: PublicKey, msg: &ClosingSigned);
+
+	// HTLC handling:
+	/// Handle an incoming `update_add_htlc` message from the given peer.
+	fn handle_update_add_htlc(&self, their_node_id: PublicKey, msg: &UpdateAddHTLC);
+	/// Handle an incoming `update_fulfill_htlc` message from the given peer.
+	fn handle_update_fulfill_htlc(&self, their_node_id: PublicKey, msg: UpdateFulfillHTLC);
+	/// Handle an incoming `update_fail_htlc` message from the given peer.
+	fn handle_update_fail_htlc(&self, their_node_id: PublicKey, msg: &UpdateFailHTLC);
+	/// Handle an incoming `update_fail_malformed_htlc` message from the given peer.
+	fn handle_update_fail_malformed_htlc(
+		&self, their_node_id: PublicKey, msg: &UpdateFailMalformedHTLC,
+	);
+	/// Handle an incoming `update_signed` message from the given peer.
+	fn handle_update_signed(&self, their_node_id: PublicKey, msg: &UpdateSigned);
+
+	/// Handle an incoming `update_signed_ack` message from the given peer.
+	fn handle_update_signed_ack(&self, their_node_id: PublicKey, msg: &UpdateSignedAck);
+
+	// Channel-to-announce:
+	/// Handle an incoming `announcement_signatures` message from the given peer.
+	fn handle_announcement_signatures(
+		&self, their_node_id: PublicKey, msg: &AnnouncementSignatures,
+	);
+
+	// Channel reestablish:
+	/// Handle an incoming `channel_reestablish` message from the given peer.
+	fn handle_channel_reestablish(&self, their_node_id: PublicKey, msg: &ChannelReestablish);
+
+	// Error:
+	/// Handle an incoming `error` message from the given peer.
+	fn handle_error(&self, their_node_id: PublicKey, msg: &ErrorMessage);
+
+	// Handler information:
+	/// Gets the chain hashes for this `ChannelMessageHandler` indicating which chains it supports.
+	///
+	/// If it's `None`, then no particular network chain hash compatibility will be enforced when
+	/// connecting to peers.
+	fn get_chain_hashes(&self) -> Option<Vec<ChainHash>>;
+
+	/// Indicates that a message was received from any peer for any handler.
+	/// Called before the message is passed to the appropriate handler.
+	/// Useful for indicating that a network connection is active.
+	///
+	/// Note: Since this function is called frequently, it should be as
+	/// efficient as possible for its intended purpose.
+	fn message_received(&self);
+}
+
+impl<T: ChannelMessageHandler + ?Sized, C: Deref<Target = T>> ChannelMessageHandler for C {
+	fn handle_open_channel_eltoo(&self, their_node_id: PublicKey, msg: &OpenChannel) {
+		self.deref().handle_open_channel_eltoo(their_node_id, msg)
+	}
+
+	fn handle_accept_channel_eltoo(&self, their_node_id: PublicKey, msg: &AcceptChannel) {
+		self.deref().handle_accept_channel_eltoo(their_node_id, msg)
+	}
+
+	fn handle_funding_created_eltoo(&self, their_node_id: PublicKey, msg: &FundingCreated) {
+		self.deref().handle_funding_created_eltoo(their_node_id, msg)
+	}
+
+	fn handle_funding_signed_eltoo(&self, their_node_id: PublicKey, msg: &FundingSigned) {
+		self.deref().handle_funding_signed_eltoo(their_node_id, msg)
+	}
+
+	fn handle_channel_ready_eltoo(&self, their_node_id: PublicKey, msg: &ChannelReady) {
+		self.deref().handle_channel_ready_eltoo(their_node_id, msg)
+	}
+
+	fn handle_shutdown_eltoo(&self, their_node_id: PublicKey, msg: &Shutdown) {
+		self.deref().handle_shutdown_eltoo(their_node_id, msg)
+	}
+
+	fn handle_closing_signed_eltoo(&self, their_node_id: PublicKey, msg: &ClosingSigned) {
+		self.deref().handle_closing_signed_eltoo(their_node_id, msg)
+	}
+
+	fn handle_update_add_htlc(&self, their_node_id: PublicKey, msg: &UpdateAddHTLC) {
+		self.deref().handle_update_add_htlc(their_node_id, msg)
+	}
+
+	fn handle_update_fulfill_htlc(&self, their_node_id: PublicKey, msg: UpdateFulfillHTLC) {
+		self.deref().handle_update_fulfill_htlc(their_node_id, msg)
+	}
+
+	fn handle_update_fail_htlc(&self, their_node_id: PublicKey, msg: &UpdateFailHTLC) {
+		self.deref().handle_update_fail_htlc(their_node_id, msg)
+	}
+
+	fn handle_update_fail_malformed_htlc(
+		&self, their_node_id: PublicKey, msg: &UpdateFailMalformedHTLC,
+	) {
+		self.deref().handle_update_fail_malformed_htlc(their_node_id, msg)
+	}
+
+	fn handle_update_signed(&self, their_node_id: PublicKey, msg: &UpdateSigned) {
+		self.deref().handle_update_signed(their_node_id, msg)
+	}
+
+	fn handle_update_signed_ack(&self, their_node_id: PublicKey, msg: &UpdateSignedAck) {
+		self.deref().handle_update_signed_ack(their_node_id, msg)
+	}
+
+	fn handle_announcement_signatures(
+		&self, their_node_id: PublicKey, msg: &AnnouncementSignatures,
+	) {
+		self.deref().handle_announcement_signatures(their_node_id, msg)
+	}
+
+	fn handle_channel_reestablish(&self, their_node_id: PublicKey, msg: &ChannelReestablish) {
+		self.deref().handle_channel_reestablish(their_node_id, msg)
+	}
+
+	fn handle_error(&self, their_node_id: PublicKey, msg: &ErrorMessage) {
+		self.deref().handle_error(their_node_id, msg)
+	}
+
+	fn get_chain_hashes(&self) -> Option<Vec<ChainHash>> {
+		self.deref().get_chain_hashes()
+	}
+
+	fn message_received(&self) {
+		self.deref().message_received()
+	}
+}

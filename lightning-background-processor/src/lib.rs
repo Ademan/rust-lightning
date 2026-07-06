@@ -2116,6 +2116,7 @@ mod tests {
 			PeerManager<
 				TestDescriptor,
 				Arc<test_utils::TestChannelMessageHandler>,
+				Arc<test_utils::TestChannelMessageHandler>,
 				Arc<test_utils::TestRoutingMessageHandler>,
 				Arc<OM>,
 				Arc<test_utils::TestLogger>,
@@ -2542,6 +2543,9 @@ mod tests {
 				Arc::new(RapidGossipSync::new(Arc::clone(&network_graph), Arc::clone(&logger)));
 			let msg_handler = MessageHandler {
 				chan_handler: Arc::new(test_utils::TestChannelMessageHandler::new(
+					ChainHash::using_genesis_block(Network::Testnet),
+				)),
+				eltoo_chan_handler: Arc::new(test_utils::TestChannelMessageHandler::new(
 					ChainHash::using_genesis_block(Network::Testnet),
 				)),
 				route_handler: Arc::new(test_utils::TestRoutingMessageHandler::new()),

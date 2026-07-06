@@ -19,6 +19,7 @@ use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
 use crate::blinded_path::message::{AsyncPaymentsContext, DNSResolverContext, OffersContext};
+use crate::ln::eltoo;
 use crate::ln::msgs;
 use crate::ln::msgs::{
 	BaseMessageHandler, ChannelMessageHandler, Init, LightningError, MessageSendEvent,
@@ -584,9 +585,110 @@ impl ChannelMessageHandler for ErroringMessageHandler {
 	fn message_received(&self) {}
 }
 
+impl eltoo::ChannelMessageHandler for ErroringMessageHandler {
+	// Channel init:
+	/// Handle an incoming `open_channel_eltoo` message from the given peer.
+	fn handle_open_channel_eltoo(&self, their_node_id: PublicKey, msg: &eltoo::OpenChannel) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.temporary_channel_id);
+	}
+	/// Handle an incoming `accept_channel_eltoo` message from the given peer.
+	fn handle_accept_channel_eltoo(&self, their_node_id: PublicKey, msg: &eltoo::AcceptChannel) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.temporary_channel_id);
+	}
+
+	/// Handle an incoming `funding_created_eltoo` message from the given peer.
+	fn handle_funding_created_eltoo(&self, their_node_id: PublicKey, msg: &eltoo::FundingCreated) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.temporary_channel_id);
+	}
+	/// Handle an incoming `funding_signed_eltoo` message from the given peer.
+	fn handle_funding_signed_eltoo(&self, their_node_id: PublicKey, msg: &eltoo::FundingSigned) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	/// Handle an incoming `channel_ready_eltoo` message from the given peer.
+	fn handle_channel_ready_eltoo(&self, their_node_id: PublicKey, msg: &eltoo::ChannelReady) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	// Channel close:
+	/// Handle an incoming `shutdown_eltoo` message from the given peer.
+	fn handle_shutdown_eltoo(&self, their_node_id: PublicKey, msg: &eltoo::Shutdown) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+	/// Handle an incoming `closing_signed_eltoo` message from the given peer.
+	fn handle_closing_signed_eltoo(&self, their_node_id: PublicKey, msg: &eltoo::ClosingSigned) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	// HTLC handling:
+	/// Handle an incoming `update_add_htlc` message from the given peer.
+	fn handle_update_add_htlc(&self, their_node_id: PublicKey, msg: &msgs::UpdateAddHTLC) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+	/// Handle an incoming `update_fulfill_htlc` message from the given peer.
+	fn handle_update_fulfill_htlc(&self, their_node_id: PublicKey, msg: msgs::UpdateFulfillHTLC) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+	/// Handle an incoming `update_fail_htlc` message from the given peer.
+	fn handle_update_fail_htlc(&self, their_node_id: PublicKey, msg: &msgs::UpdateFailHTLC) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+	/// Handle an incoming `update_fail_malformed_htlc` message from the given peer.
+	fn handle_update_fail_malformed_htlc(
+		&self, their_node_id: PublicKey, msg: &msgs::UpdateFailMalformedHTLC,
+	) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+	/// Handle an incoming `update_signed` message from the given peer.
+	fn handle_update_signed(&self, their_node_id: PublicKey, msg: &eltoo::UpdateSigned) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	/// Handle an incoming `update_signed_ack` message from the given peer.
+	fn handle_update_signed_ack(&self, their_node_id: PublicKey, msg: &eltoo::UpdateSignedAck) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	// Channel-to-announce:
+	/// Handle an incoming `announcement_signatures` message from the given peer.
+	fn handle_announcement_signatures(
+		&self, their_node_id: PublicKey, msg: &msgs::AnnouncementSignatures,
+	) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	// Channel reestablish:
+	/// Handle an incoming `channel_reestablish` message from the given peer.
+	fn handle_channel_reestablish(&self, their_node_id: PublicKey, msg: &eltoo::ChannelReestablish) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	// Error:
+	/// Handle an incoming `error` message from the given peer.
+	fn handle_error(&self, their_node_id: PublicKey, msg: &msgs::ErrorMessage) {
+		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
+	}
+
+	// Handler information:
+	/// Gets the chain hashes for this `ChannelMessageHandler` indicating which chains it supports.
+	///
+	/// If it's `None`, then no particular network chain hash compatibility will be enforced when
+	/// connecting to peers.
+	fn get_chain_hashes(&self) -> Option<Vec<ChainHash>> { None }
+
+	/// Indicates that a message was received from any peer for any handler.
+	/// Called before the message is passed to the appropriate handler.
+	/// Useful for indicating that a network connection is active.
+	///
+	/// Note: Since this function is called frequently, it should be as
+	/// efficient as possible for its intended purpose.
+	fn message_received(&self) { }
+}
+
 /// Provides references to trait impls which handle different types of messages.
 pub struct MessageHandler<
 	CM: ChannelMessageHandler,
+	ECM: eltoo::ChannelMessageHandler,
 	RM: RoutingMessageHandler,
 	OM: OnionMessageHandler,
 	CustomM: CustomMessageHandler,
@@ -597,6 +699,10 @@ pub struct MessageHandler<
 	///
 	/// [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
 	pub chan_handler: CM,
+
+	/// A message handler which handles messages to eltoo channels
+	pub eltoo_chan_handler: ECM,
+
 	/// A message handler which handles messages updating our knowledge of the network channel
 	/// graph. Usually this is just a [`P2PGossipSync`] object or an [`IgnoringMessageHandler`].
 	///
@@ -939,6 +1045,7 @@ impl Peer {
 pub type SimpleArcPeerManager<SD, M, T, F, C, L, CF, S> = PeerManager<
 	SD,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
+	Arc<eltoo::SimpleArcChannelManager<M, T, F, L>>,
 	Arc<P2PGossipSync<Arc<NetworkGraph<Arc<L>>>, C, Arc<L>>>,
 	Arc<SimpleArcOnionMessenger<M, T, F, L>>,
 	Arc<L>,
@@ -962,6 +1069,7 @@ pub type SimpleRefPeerManager<
 > = PeerManager<
 	SD,
 	&'j SimpleRefChannelManager<'a, 'b, 'c, 'd, 'e, 'graph, 'logger, 'i, 'mr, M, T, F, L>,
+	&'j eltoo::SimpleRefChannelManager<'a, 'b, 'c, 'd, 'e, 'graph, 'logger, 'i, M, T, F, L>,
 	&'f P2PGossipSync<&'graph NetworkGraph<&'logger L>, C, &'logger L>,
 	&'h SimpleRefOnionMessenger<'a, 'b, 'c, 'd, 'e, 'graph, 'logger, 'i, 'j, 'k, M, T, F, L>,
 	&'logger L,
@@ -980,6 +1088,7 @@ pub type SimpleRefPeerManager<
 pub trait APeerManager {
 	type Descriptor: SocketDescriptor;
 	type CM: ChannelMessageHandler;
+	type ECM: eltoo::ChannelMessageHandler;
 	type RM: RoutingMessageHandler;
 	type OM: OnionMessageHandler;
 	type Logger: Logger;
@@ -992,6 +1101,7 @@ pub trait APeerManager {
 	) -> &PeerManager<
 		Self::Descriptor,
 		Self::CM,
+		Self::ECM,
 		Self::RM,
 		Self::OM,
 		Self::Logger,
@@ -1004,23 +1114,25 @@ pub trait APeerManager {
 impl<
 		Descriptor: SocketDescriptor,
 		CM: ChannelMessageHandler,
+		ECM: eltoo::ChannelMessageHandler,
 		RM: RoutingMessageHandler,
 		OM: OnionMessageHandler,
 		L: Logger,
 		CMH: CustomMessageHandler,
 		NS: NodeSigner,
 		SM: SendOnlyMessageHandler,
-	> APeerManager for PeerManager<Descriptor, CM, RM, OM, L, CMH, NS, SM>
+	> APeerManager for PeerManager<Descriptor, CM, ECM, RM, OM, L, CMH, NS, SM>
 {
 	type Descriptor = Descriptor;
 	type CM = CM;
+	type ECM = ECM;
 	type RM = RM;
 	type OM = OM;
 	type Logger = L;
 	type CMH = CMH;
 	type NodeSigner = NS;
 	type SM = SM;
-	fn as_ref(&self) -> &PeerManager<Descriptor, CM, RM, OM, L, CMH, NS, SM> {
+	fn as_ref(&self) -> &PeerManager<Descriptor, CM, ECM, RM, OM, L, CMH, NS, SM> {
 		self
 	}
 }
@@ -1047,6 +1159,7 @@ impl<
 pub struct PeerManager<
 	Descriptor: SocketDescriptor,
 	CM: ChannelMessageHandler,
+	ECM: eltoo::ChannelMessageHandler,
 	RM: RoutingMessageHandler,
 	OM: OnionMessageHandler,
 	L: Logger,
@@ -1054,7 +1167,7 @@ pub struct PeerManager<
 	NS: NodeSigner,
 	SM: SendOnlyMessageHandler,
 > {
-	message_handler: MessageHandler<CM, RM, OM, CMH, SM>,
+	message_handler: MessageHandler<CM, ECM, RM, OM, CMH, SM>,
 	/// Connection state for each connected peer - we have an outer read-write lock which is taken
 	/// as read while we're doing processing for a peer and taken write when a peer is being added
 	/// or removed.
@@ -1132,11 +1245,12 @@ fn encode_message<T: wire::Type>(message: wire::Message<T>) -> Vec<u8> {
 impl<
 		Descriptor: SocketDescriptor,
 		CM: ChannelMessageHandler,
+		ECM: eltoo::ChannelMessageHandler,
 		OM: OnionMessageHandler,
 		L: Logger,
 		NS: NodeSigner,
 		SM: SendOnlyMessageHandler,
-	> PeerManager<Descriptor, CM, IgnoringMessageHandler, OM, L, IgnoringMessageHandler, NS, SM>
+	> PeerManager<Descriptor, CM, ECM, IgnoringMessageHandler, OM, L, IgnoringMessageHandler, NS, SM>
 {
 	/// Constructs a new `PeerManager` with the given `ChannelMessageHandler` and
 	/// `OnionMessageHandler`. No routing message handler is used and network graph messages are
@@ -1152,13 +1266,14 @@ impl<
 	///
 	/// This is not exported to bindings users as we can't export a PeerManager with a dummy route handler
 	pub fn new_channel_only(
-		channel_message_handler: CM, onion_message_handler: OM, current_time: u32,
+		channel_message_handler: CM, eltoo_chan_handler: ECM, onion_message_handler: OM, current_time: u32,
 		ephemeral_random_data: &[u8; 32], logger: L, node_signer: NS,
 		send_only_message_handler: SM,
 	) -> Self {
 		Self::new(
 			MessageHandler {
 				chan_handler: channel_message_handler,
+				eltoo_chan_handler,
 				route_handler: IgnoringMessageHandler {},
 				onion_message_handler,
 				custom_message_handler: IgnoringMessageHandler {},
@@ -1175,6 +1290,7 @@ impl<
 impl<Descriptor: SocketDescriptor, RM: RoutingMessageHandler, L: Logger, NS: NodeSigner>
 	PeerManager<
 		Descriptor,
+		ErroringMessageHandler,
 		ErroringMessageHandler,
 		RM,
 		IgnoringMessageHandler,
@@ -1205,6 +1321,7 @@ impl<Descriptor: SocketDescriptor, RM: RoutingMessageHandler, L: Logger, NS: Nod
 		Self::new(
 			MessageHandler {
 				chan_handler: ErroringMessageHandler::new(),
+				eltoo_chan_handler: ErroringMessageHandler::new(),
 				route_handler: routing_message_handler,
 				onion_message_handler: IgnoringMessageHandler {},
 				custom_message_handler: IgnoringMessageHandler {},
@@ -1269,13 +1386,14 @@ fn filter_addresses(ip_address: Option<SocketAddress>) -> Option<SocketAddress> 
 impl<
 		Descriptor: SocketDescriptor,
 		CM: ChannelMessageHandler,
+		ECM: eltoo::ChannelMessageHandler,
 		RM: RoutingMessageHandler,
 		OM: OnionMessageHandler,
 		L: Logger,
 		CMH: CustomMessageHandler,
 		NS: NodeSigner,
 		SM: SendOnlyMessageHandler,
-	> PeerManager<Descriptor, CM, RM, OM, L, CMH, NS, SM>
+	> PeerManager<Descriptor, CM, ECM, RM, OM, L, CMH, NS, SM>
 {
 	/// Constructs a new `PeerManager` with the given message handlers.
 	///
@@ -1287,7 +1405,7 @@ impl<
 	/// timestamp, however if it is not available a persistent counter that increases once per
 	/// minute should suffice.
 	pub fn new(
-		message_handler: MessageHandler<CM, RM, OM, CMH, SM>, current_time: u32,
+		message_handler: MessageHandler<CM, ECM, RM, OM, CMH, SM>, current_time: u32,
 		ephemeral_random_data: &[u8; 32], logger: L, node_signer: NS,
 	) -> Self {
 		let mut ephemeral_key_midstate = Sha256::engine();
@@ -3786,6 +3904,7 @@ mod tests {
 
 	struct PeerManagerCfg {
 		chan_handler: test_utils::TestChannelMessageHandler,
+		eltoo_chan_handler: test_utils::TestChannelMessageHandler,
 		routing_handler: test_utils::TestRoutingMessageHandler,
 		custom_handler: TestCustomMessageHandler,
 		send_only_handler: TestBaseMsgHandler,
@@ -3882,6 +4001,9 @@ mod tests {
 				chan_handler: test_utils::TestChannelMessageHandler::new(
 					ChainHash::using_genesis_block(Network::Testnet),
 				),
+				eltoo_chan_handler: test_utils::TestChannelMessageHandler::new(
+					ChainHash::using_genesis_block(Network::Testnet),
+				),
 				logger: test_utils::TestLogger::with_id(i.to_string()),
 				routing_handler: test_utils::TestRoutingMessageHandler::new(),
 				custom_handler: TestCustomMessageHandler::new(features),
@@ -3906,6 +4028,9 @@ mod tests {
 				chan_handler: test_utils::TestChannelMessageHandler::new(
 					ChainHash::using_genesis_block(Network::Testnet),
 				),
+				eltoo_chan_handler: test_utils::TestChannelMessageHandler::new(
+					ChainHash::using_genesis_block(Network::Testnet),
+				),
 				logger: test_utils::TestLogger::new(),
 				routing_handler: test_utils::TestRoutingMessageHandler::new(),
 				custom_handler: TestCustomMessageHandler::new(features),
@@ -3925,6 +4050,9 @@ mod tests {
 			let network = ChainHash::from(&[i as u8; 32]);
 			cfgs.push(PeerManagerCfg {
 				chan_handler: test_utils::TestChannelMessageHandler::new(network),
+				eltoo_chan_handler: test_utils::TestChannelMessageHandler::new(
+					ChainHash::using_genesis_block(Network::Testnet),
+				),
 				logger: test_utils::TestLogger::new(),
 				routing_handler: test_utils::TestRoutingMessageHandler::new(),
 				custom_handler: TestCustomMessageHandler::new(features),
@@ -3942,6 +4070,7 @@ mod tests {
 			let ephemeral_bytes = [i as u8; 32];
 			let msg_handler = MessageHandler {
 				chan_handler: &cfgs[i].chan_handler,
+				eltoo_chan_handler: &cfgs[i].eltoo_chan_handler,
 				route_handler: &cfgs[i].routing_handler,
 				onion_message_handler: IgnoringMessageHandler {},
 				custom_message_handler: &cfgs[i].custom_handler,
@@ -3962,6 +4091,7 @@ mod tests {
 
 	type TestPeer<'a> = PeerManager<
 		FileDescriptor,
+		&'a test_utils::TestChannelMessageHandler,
 		&'a test_utils::TestChannelMessageHandler,
 		&'a test_utils::TestRoutingMessageHandler,
 		IgnoringMessageHandler,
@@ -4572,6 +4702,7 @@ mod tests {
 			test_utils::TestNodeSigner::new(SecretKey::from_slice(&[43; 32]).unwrap());
 		let message_handler_a = MessageHandler {
 			chan_handler: ErroringMessageHandler::new(),
+			eltoo_chan_handler: ErroringMessageHandler::new(),
 			route_handler: IgnoringMessageHandler {},
 			onion_message_handler: IgnoringMessageHandler {},
 			custom_message_handler: IgnoringMessageHandler {},
@@ -4579,6 +4710,7 @@ mod tests {
 		};
 		let message_handler_b = MessageHandler {
 			chan_handler: ErroringMessageHandler::new(),
+			eltoo_chan_handler: ErroringMessageHandler::new(),
 			route_handler: IgnoringMessageHandler {},
 			onion_message_handler: IgnoringMessageHandler {},
 			custom_message_handler: IgnoringMessageHandler {},
