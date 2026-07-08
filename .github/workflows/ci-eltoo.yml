@@ -1,0 +1,83 @@
+name: Eltoo CI
+
+# Run basic checks for eltoo branches on Github CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - eltoo
+      - 'eltoo-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eltoo-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-std:
+    name: check/test std
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Install Rust stable toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain stable
+
+      - name: Check
+        run: cargo check
+
+      - name: Test
+        run: cargo test
+
+  rust-no-std-x86:
+    name: check no-std
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain stable
+
+      - name: Check
+        run: cargo check
+
+      - name: Test lightning-invoice no-std
+        run: cargo test -p lightning-invoice --no-default-features
+
+      - name: Test lightning-rapid-gossip-sync no-std
+        run: cargo test -p lightning-rapid-gossip-sync --no-default-features
+
+      - name: Test lightning-liquidity no-std
+        run: cargo test -p lightning-liquidity --no-default-features
+
+      - name: Test lightning no-std
+        run: cargo test -p lightning --no-default-features
+
+  rust-no-std-arm:
+    name: check no-std
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal --default-toolchain stable --target thumbv7m-none-eabi
+
+      - name: Install ARM C cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gcc-arm-none-eabi
+
+      - name: Check no-std
+        working-directory: no-std-check
+        run: cargo build --no-default-features --target thumbv7m-none-eabi

@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   check_commits:
+    if: ${{ false }} # Skip in eltoo dev
     runs-on: self-hosted
     env:
       TOOLCHAIN: stable

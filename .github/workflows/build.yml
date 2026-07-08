@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   ext-test:
+    if: ${{ false }} # Skip in eltoo dev
     runs-on: self-hosted
     steps:
       - name: Checkout source code
@@ -58,6 +59,7 @@ jobs:
       script: ci/ci-tests-sync.sh
 
   coverage:
+    if: ${{ false }} # Skip in eltoo dev
     needs: fuzz
     strategy:
       fail-fast: false
@@ -195,6 +197,7 @@ jobs:
           RUSTDOCFLAGS: '--cfg=taproot'
 
   check_docs:
+    if: ${{ false }} # Skip in eltoo dev
     runs-on: self-hosted
     env:
       # While docs.rs builds using a nightly compiler (and we use some nightly features),
@@ -213,6 +216,7 @@ jobs:
         run: ci/check-docsrs.sh
 
   fuzz_sanity:
+    if: ${{ false }} # Skip in eltoo dev
     runs-on: self-hosted
     env:
       TOOLCHAIN: 1.75
@@ -230,6 +234,7 @@ jobs:
           RUSTFLAGS="--cfg=fuzzing --cfg=secp256k1_fuzz --cfg=chacha20_poly1305_fuzz" cargo test --manifest-path fuzz-real-hashes/Cargo.toml --quiet --color always --bins -j8
 
   fuzz:
+    if: ${{ false }} # Skip in eltoo dev
     runs-on: self-hosted
     env:
       TOOLCHAIN: 1.75
