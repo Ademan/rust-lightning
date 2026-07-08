@@ -25,6 +25,7 @@ use core::ops::Deref;
 use core::str::FromStr;
 
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 use bitcoin::absolute::LockTime as AbsoluteLockTime;
 use bitcoin::address::Address;
@@ -49,6 +50,8 @@ use bitcoin::{consensus, Sequence, TxIn, Weight, Witness};
 use dnssec_prover::rr::Name;
 
 use lightning_invoice::Bolt11Invoice;
+
+use secp256k1_musig::musig;
 
 use crate::chain::ClaimId;
 use crate::ln::msgs::{DecodeError, SerialId};
@@ -682,6 +685,7 @@ impl_array!(16, u8); // for IPv6
 impl_array!(32, u8); // for channel id & hmac
 impl_array!(PUBLIC_KEY_SIZE, u8); // for PublicKey
 impl_array!(64, u8); // for ecdsa::Signature and schnorr::Signature
+impl_array!(musig::PUBNONCE_SERIALIZED_SIZE, u8);
 impl_array!(1300, u8); // for OnionPacket.hop_data
 
 impl_array!(8, u16);
@@ -1791,6 +1795,46 @@ impl Writeable for ClaimId {
 impl Readable for ClaimId {
 	fn read<R: io::Read>(reader: &mut R) -> Result<Self, DecodeError> {
 		Ok(Self(Readable::read(reader)?))
+	}
+}
+
+impl Readable for musig::PublicNonce {
+	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let buf: [u8; musig::PUBNONCE_SERIALIZED_SIZE] = Readable::read(r)?;
+		match Self::from_byte_array(&buf) {
+			Ok(nonce) => Ok(nonce),
+			Err(_) => return Err(DecodeError::InvalidValue),
+		}
+	}
+}
+
+impl Writeable for musig::PublicNonce {
+	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
+		self.serialize().write(w)
+	}
+	#[inline]
+	fn serialized_length(&self) -> usize {
+		musig::PUBNONCE_SERIALIZED_SIZE
+	}
+}
+
+impl Readable for musig::PartialSignature {
+	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let buf: [u8; musig::PART_SIG_SERIALIZED_SIZE] = Readable::read(r)?;
+		match Self::from_byte_array(&buf) {
+			Ok(sig) => Ok(sig),
+			Err(_) => return Err(DecodeError::InvalidValue),
+		}
+	}
+}
+
+impl Writeable for musig::PartialSignature {
+	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
+		self.serialize().write(w)
+	}
+	#[inline]
+	fn serialized_length(&self) -> usize {
+		musig::PART_SIG_SERIALIZED_SIZE
 	}
 }
 
