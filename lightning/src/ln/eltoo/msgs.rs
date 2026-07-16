@@ -10,6 +10,7 @@ use secp256k1_musig::musig;
 
 use crate::io;
 use crate::ln::types::ChannelId;
+use crate::ln::wire::{Type, Encode};
 use crate::prelude::*;
 use crate::types::features::ChannelTypeFeatures;
 
@@ -26,6 +27,7 @@ use crate::util::ser::{
 /// An [`open_channel_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`open_channel_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#the-open_channel_eltoo-message
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct OpenChannel {
 	/// The genesis hash of the blockchain where the channel is to be opened
 	pub chain_hash: ChainHash,
@@ -68,6 +70,7 @@ pub struct OpenChannel {
 /// An [`accept_channel_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`accept_channel_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#the-accept_channel_eltoo-message
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct AcceptChannel {
 	/// A temporary channel ID
 	pub temporary_channel_id: ChannelId,
@@ -104,6 +107,7 @@ pub struct AcceptChannel {
 /// An [`funding_created_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`funding_created_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#the-funding_created_eltoo-message
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct FundingCreated {
 	/// A temporary channel ID
 	pub temporary_channel_id: ChannelId,
@@ -119,6 +123,7 @@ pub struct FundingCreated {
 /// An [`funding_signed_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`funding_signed_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#the-funding_signed_eltoo-message
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct FundingSigned {
 	/// Channel ID
 	pub channel_id: ChannelId,
@@ -132,6 +137,7 @@ pub struct FundingSigned {
 /// A [`channel_ready_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`channel_ready_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#the-channel_ready_eltoo-message
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ChannelReady {
 	/// Channel ID
 	pub channel_id: ChannelId,
@@ -140,6 +146,7 @@ pub struct ChannelReady {
 /// A [`shutdown_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`shutdown_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#closing-initiation-shutdown
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Shutdown {
 	/// Channel ID
 	pub channel_id: ChannelId,
@@ -154,6 +161,7 @@ pub struct Shutdown {
 /// A [`closing_signed_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`closing_signed_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#closing-negotiation-closing_signed
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ClosingSigned {
 	/// Channel ID
 	pub channel_id: ChannelId,
@@ -174,6 +182,7 @@ pub struct ClosingSigned {
 /// An [`update_signed`] message to be sent to or received from a peer.
 ///
 /// [`update_signed`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#committing-updates-so-far-update_signed
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UpdateSigned {
 	/// Channel ID
 	pub channel_id: ChannelId,
@@ -188,6 +197,7 @@ pub struct UpdateSigned {
 /// An [`update_signed_ack`] message to be sent to or received from a peer.
 ///
 /// [`update_signed_ack`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#finalizing-the-update-update_signed_ack
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UpdateSignedAck {
 	/// Channel ID
 	pub channel_id: ChannelId,
@@ -201,6 +211,7 @@ pub struct UpdateSignedAck {
 /// An [`channel_reestablish_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`channel_reestablish_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#message-retransmission-for-eltoo
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ChannelReestablish {
 	/// Channel ID
 	pub channel_id: ChannelId,
@@ -410,6 +421,113 @@ impl_writeable_msg!(ChannelReestablish, {
 	update_partial_signature,
 	fresh_nonce,
 }, {});
+
+#[derive(Clone, Debug)]
+pub enum Message {
+	OpenChannel(OpenChannel),
+	AcceptChannel(AcceptChannel),
+	FundingCreated(FundingCreated),
+	FundingSigned(FundingSigned),
+	ChannelReady(ChannelReady),
+	Shutdown(Shutdown),
+	ClosingSigned(ClosingSigned),
+	UpdateSigned(UpdateSigned),
+	UpdateSignedAck(UpdateSignedAck),
+	ChannelReestablish(ChannelReestablish),
+}
+
+impl Message {
+	pub fn channel_id(&self) -> ChannelId {
+		match self {
+			Message::OpenChannel(msg) => msg.temporary_channel_id,
+			Message::AcceptChannel(msg) => msg.temporary_channel_id,
+			Message::FundingCreated(msg) => msg.temporary_channel_id,
+			Message::FundingSigned(msg) => msg.channel_id,
+			Message::ChannelReady(msg) => msg.channel_id,
+			Message::Shutdown(msg) => msg.channel_id,
+			Message::ClosingSigned(msg) => msg.channel_id,
+			Message::UpdateSigned(msg) => msg.channel_id,
+			Message::UpdateSignedAck(msg) => msg.channel_id,
+			Message::ChannelReestablish(msg) => msg.channel_id,
+		}
+	}
+}
+
+impl Writeable for Message {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		match self {
+			Message::OpenChannel(ref msg) => msg.write(writer),
+			Message::AcceptChannel(ref msg) => msg.write(writer),
+			Message::FundingCreated(ref msg) => msg.write(writer),
+			Message::FundingSigned(ref msg) => msg.write(writer),
+			Message::ChannelReady(ref msg) => msg.write(writer),
+			Message::Shutdown(ref msg) => msg.write(writer),
+			Message::ClosingSigned(ref msg) => msg.write(writer),
+			Message::UpdateSigned(ref msg) => msg.write(writer),
+			Message::UpdateSignedAck(ref msg) => msg.write(writer),
+			Message::ChannelReestablish(ref msg) => msg.write(writer),
+		}
+	}
+}
+
+// XXX: Arguably should be in a separate module
+impl Encode for OpenChannel {
+	const TYPE: u16 = 32778;
+}
+
+impl Encode for AcceptChannel {
+	const TYPE: u16 = 32769;
+}
+
+impl Encode for FundingCreated {
+	const TYPE: u16 = 32770;
+}
+
+impl Encode for FundingSigned {
+	const TYPE: u16 = 32771;
+}
+
+impl Encode for ChannelReady {
+	const TYPE: u16 = 32772;
+}
+
+impl Encode for Shutdown {
+	const TYPE: u16 = 32773;
+}
+
+impl Encode for ClosingSigned {
+	const TYPE: u16 = 32774;
+}
+
+impl Encode for UpdateSigned {
+	const TYPE: u16 = 32775;
+}
+
+impl Encode for UpdateSignedAck {
+	const TYPE: u16 = 32776;
+}
+
+impl Encode for ChannelReestablish {
+	const TYPE: u16 = 32777;
+}
+
+impl Type for Message {
+	/// Returns the type that was used to decode the message payload.
+	fn type_id(&self) -> u16 {
+		match self {
+			Message::OpenChannel(ref msg) => msg.type_id(),
+			Message::AcceptChannel(ref msg) => msg.type_id(),
+			Message::FundingCreated(ref msg) => msg.type_id(),
+			Message::FundingSigned(ref msg) => msg.type_id(),
+			Message::ChannelReady(ref msg) => msg.type_id(),
+			Message::Shutdown(ref msg) => msg.type_id(),
+			Message::ClosingSigned(ref msg) => msg.type_id(),
+			Message::UpdateSigned(ref msg) => msg.type_id(),
+			Message::UpdateSignedAck(ref msg) => msg.type_id(),
+			Message::ChannelReestablish(ref msg) => msg.type_id(),
+		}
+	}
+}
 
 // XXX: Cargo culting the handler pattern from the existing peer manager code, hopefully that will
 // prove prudent.

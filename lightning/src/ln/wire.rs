@@ -14,6 +14,7 @@
 
 use crate::io;
 use crate::ln::msgs;
+use crate::ln::eltoo;
 use crate::util::ser::{LengthLimitedRead, LengthReadable, Readable, Writeable, Writer};
 use core::ops::Deref;
 
@@ -111,6 +112,7 @@ pub(crate) enum Message<T: core::fmt::Debug + Type + TestEq> {
 	QueryChannelRange(msgs::QueryChannelRange),
 	ReplyChannelRange(msgs::ReplyChannelRange),
 	GossipTimestampFilter(msgs::GossipTimestampFilter),
+	Eltoo(eltoo::Message),
 	/// A message that could not be decoded because its type is unknown.
 	Unknown(u16),
 	/// A message that was produced by a [`CustomMessageReader`] and is to be handled by a
@@ -173,6 +175,7 @@ impl<T: core::fmt::Debug + Type + TestEq> Writeable for Message<T> {
 			&Message::QueryChannelRange(ref msg) => msg.write(writer),
 			&Message::ReplyChannelRange(ref msg) => msg.write(writer),
 			&Message::GossipTimestampFilter(ref msg) => msg.write(writer),
+			&Message::Eltoo(ref msg) => msg.write(writer),
 			&Message::Unknown(_) => Ok(()),
 			&Message::Custom(ref msg) => msg.write(writer),
 		}
@@ -235,6 +238,7 @@ impl<T: core::fmt::Debug + Type + TestEq> Type for Message<T> {
 			&Message::QueryChannelRange(ref msg) => msg.type_id(),
 			&Message::ReplyChannelRange(ref msg) => msg.type_id(),
 			&Message::GossipTimestampFilter(ref msg) => msg.type_id(),
+			&Message::Eltoo(ref msg) => msg.type_id(),
 			&Message::Unknown(type_id) => type_id,
 			&Message::Custom(ref msg) => msg.type_id(),
 		}

@@ -47,6 +47,7 @@ use crate::prelude::*;
 
 use crate::io::{self, Cursor, Read};
 use crate::io_extras::read_to_end;
+use crate::ln::eltoo;
 use core::fmt;
 use core::fmt::Debug;
 use core::fmt::Display;
@@ -2012,6 +2013,15 @@ pub enum MessageSendEvent {
 		node_id: PublicKey,
 		/// The peer_storage_retrieval which should be sent.
 		msg: PeerStorageRetrieval,
+	},
+
+	/// Sends an eltoo message
+	SendEltoo {
+		/// The node_id of this message recipient
+		node_id: PublicKey,
+
+		/// The eltoo message which should be sent
+		msg: eltoo::Message,
 	},
 }
 

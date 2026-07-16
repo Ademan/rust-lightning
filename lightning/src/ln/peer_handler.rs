@@ -2708,6 +2708,49 @@ impl<
 				onion_message_handler.handle_onion_message(their_node_id, &msg);
 			},
 
+            // XXX: Hey this accidentally maps really well onto the way I structured the
+            // channel handler
+            Message::Eltoo(eltoo::Message::OpenChannel(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_open_channel_eltoo(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::AcceptChannel(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_accept_channel_eltoo(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::FundingCreated(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_funding_created_eltoo(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::FundingSigned(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_funding_signed_eltoo(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::ChannelReady(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_channel_ready_eltoo(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::Shutdown(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_shutdown_eltoo(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::ClosingSigned(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_closing_signed_eltoo(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::UpdateSigned(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_update_signed(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::UpdateSignedAck(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_update_signed_ack(their_node_id, msg);
+            },
+            Message::Eltoo(eltoo::Message::ChannelReestablish(ref msg)) => {
+                let eltoo_channel_handler  = &self.message_handler.eltoo_chan_handler;
+                eltoo_channel_handler.handle_channel_reestablish(their_node_id, msg);
+            },
+
 			// Unknown messages:
 			Message::Unknown(type_id) if message.is_even() => {
 				log_debug!(
@@ -3449,6 +3492,16 @@ impl<
 								msg.first_timestamp,
 								msg.timestamp_range);
 							let msg = Message::GossipTimestampFilter(msg);
+							self.enqueue_message(&mut *get_peer_for_forwarding!(node_id)?, msg);
+						},
+
+						MessageSendEvent::SendEltoo { ref node_id, msg } => {
+							log_trace!(
+								WithContext::from(&self.logger, Some(*node_id), None, None),
+								"Handling SendEltoo event in peer_handler for channel {}",
+								msg.channel_id(),
+							);
+							let msg = Message::Eltoo(msg);
 							self.enqueue_message(&mut *get_peer_for_forwarding!(node_id)?, msg);
 						},
 					}

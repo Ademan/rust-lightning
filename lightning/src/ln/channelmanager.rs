@@ -15866,6 +15866,7 @@ impl<
 							&MessageSendEvent::SendShortIdsQuery { .. } => false,
 							&MessageSendEvent::SendReplyChannelRange { .. } => false,
 							&MessageSendEvent::SendGossipTimestampFilter { .. } => false,
+							&MessageSendEvent::SendEltoo { .. } => false,
 
 							// Peer Storage
 							&MessageSendEvent::SendPeerStorage { .. } => false,
