@@ -358,7 +358,7 @@ impl<
     }
 
     fn handle_accept_channel_eltoo(&self, their_node_id: PublicKey, msg: &AcceptChannel) {
-		match self.internal_accept_channel(their_node_id, msg) {
+		match self.internal_accept_channel(their_node_id, msg.temporary_channel_id) {
 			Ok(_) => todo!(),
 			Err(_) => {
 				// TOOD: log error
