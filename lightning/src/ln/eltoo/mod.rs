@@ -2,6 +2,7 @@
 
 pub mod chain;
 pub mod channelmanager;
+pub mod events;
 pub mod msgs;
 
 // Re-export to enable convenient usage as [`eltoo::*`]

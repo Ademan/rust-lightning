@@ -3,6 +3,7 @@
 use core::ops::Deref;
 
 use bitcoin::constants::ChainHash;
+use bitcoin::io::Read;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Txid};
 
@@ -24,6 +25,66 @@ use crate::util::ser::{
 	LengthReadable, LengthReadableArgs, Readable, ReadableArgs, WithoutLength, Writeable, Writer,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct MilliSatoshi(u64);
+
+impl MilliSatoshi {
+	pub const ZERO: MilliSatoshi = Self(0);
+
+    pub fn from_msat(msat: u64) -> Self { Self(msat) }
+
+    pub fn to_amount(self) -> (Amount, MilliSatoshi) {
+        (
+            Amount::from_sat(self.0 / 1000),
+            Self(self.0 % 1000),
+        )
+    }
+
+    pub fn to_msat(self) -> u64 { self.0 }
+
+    pub fn checked_sub(&self, other: Self) -> Option<Self> {
+        self.0.checked_sub(other.0)
+            .map(|msat| Self::from_msat(msat))
+    }
+
+    pub fn checked_add(&self, other: Self) -> Option<Self> {
+        self.0.checked_add(other.0)
+            .map(|msat| Self::from_msat(msat))
+    }
+}
+
+#[derive(Debug)]
+pub struct MilliSatoshiOverflow;
+
+impl TryFrom<Amount> for MilliSatoshi {
+    type Error = MilliSatoshiOverflow;
+
+    fn try_from(amount: Amount) -> Result<Self, Self::Error> {
+        amount.to_sat().checked_mul(1000)
+            .map(Self)
+            .ok_or(MilliSatoshiOverflow)
+
+    }
+}
+
+impl Readable for MilliSatoshi {
+	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let msat: u64 = Readable::read(r)?;
+		Ok(Self(msat))
+	}
+}
+
+impl Writeable for MilliSatoshi {
+	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
+		self.0.write(w)
+	}
+
+	#[inline]
+	fn serialized_length(&self) -> usize {
+		self.0.serialized_length()
+	}
+}
+
 /// An [`open_channel_eltoo`] message to be sent to or received from a peer.
 ///
 /// [`open_channel_eltoo`]: https://github.com/instagibbs/bolts/blob/2026-01-eltoo_th/XX-eltoo-peer-protocol.md#the-open_channel_eltoo-message
@@ -37,12 +98,12 @@ pub struct OpenChannel {
 
 	pub funding_amount: Amount,
 
-	pub push_msat: u64,
+	pub push_value: MilliSatoshi,
 
 	/// The maximum inbound HTLC value in flight towards channel initiator, in milli-satoshi
-	pub max_htlc_value_in_flight_msat: u64,
+	pub max_htlc_value_in_flight: MilliSatoshi,
 	/// The minimum HTLC size incoming to channel initiator, in milli-satoshi
-	pub htlc_minimum_msat: u64,
+	pub htlc_minimum_value: MilliSatoshi,
 	/// The delay before a settlement transaction may spend an on-chain update transaction
 	pub shared_delay: u16,
 	/// The maximum number of inbound HTLCs towards channel initiator
@@ -76,9 +137,9 @@ pub struct AcceptChannel {
 	pub temporary_channel_id: ChannelId,
 
 	/// The maximum inbound HTLC value in flight towards channel initiator, in milli-satoshi
-	pub max_htlc_value_in_flight_msat: u64,
+	pub max_htlc_value_in_flight: MilliSatoshi,
 	/// The minimum HTLC size incoming to channel initiator, in milli-satoshi
-	pub htlc_minimum_msat: u64,
+	pub htlc_minimum_value: MilliSatoshi,
 	/// The minimum number of confirmations the funding transaction must achieve before the channel
 	/// is considered ready
 	pub minimum_depth: u32,
@@ -229,9 +290,9 @@ impl LengthReadable for OpenChannel {
 		let chain_hash: ChainHash = Readable::read(r)?;
 		let temporary_channel_id: ChannelId = Readable::read(r)?;
 		let funding_amount: Amount = Readable::read(r)?;
-		let push_msat: u64 = Readable::read(r)?;
-		let max_htlc_value_in_flight_msat: u64 = Readable::read(r)?;
-		let htlc_minimum_msat: u64 = Readable::read(r)?;
+		let push_value: MilliSatoshi = Readable::read(r)?;
+		let max_htlc_value_in_flight: MilliSatoshi = Readable::read(r)?;
+		let htlc_minimum_value: MilliSatoshi = Readable::read(r)?;
 		let shared_delay: u16 = Readable::read(r)?;
 		let max_accepted_htlcs: u16 = Readable::read(r)?;
 		let funding_pubkey: PublicKey = Readable::read(r)?;
@@ -251,9 +312,9 @@ impl LengthReadable for OpenChannel {
 			chain_hash,
 			temporary_channel_id,
 			funding_amount,
-			push_msat,
-			max_htlc_value_in_flight_msat,
-			htlc_minimum_msat,
+			push_value,
+			max_htlc_value_in_flight,
+			htlc_minimum_value,
 			shared_delay,
 			max_accepted_htlcs,
 			funding_pubkey,
@@ -271,9 +332,9 @@ impl Writeable for OpenChannel {
 		self.chain_hash.write(w)?;
 		self.temporary_channel_id.write(w)?;
 		self.funding_amount.write(w)?;
-		self.push_msat.write(w)?;
-		self.max_htlc_value_in_flight_msat.write(w)?;
-		self.htlc_minimum_msat.write(w)?;
+		self.push_value.write(w)?;
+		self.max_htlc_value_in_flight.write(w)?;
+		self.htlc_minimum_value.write(w)?;
 		self.shared_delay.write(w)?;
 		self.max_accepted_htlcs.write(w)?;
 		self.funding_pubkey.write(w)?;
@@ -293,8 +354,8 @@ impl Writeable for OpenChannel {
 impl LengthReadable for AcceptChannel {
 	fn read_from_fixed_length_buffer<R: LengthLimitedRead>(r: &mut R) -> Result<Self, DecodeError> {
 		let temporary_channel_id: ChannelId = Readable::read(r)?;
-		let max_htlc_value_in_flight_msat: u64 = Readable::read(r)?;
-		let htlc_minimum_msat: u64 = Readable::read(r)?;
+		let max_htlc_value_in_flight: MilliSatoshi = Readable::read(r)?;
+		let htlc_minimum_value: MilliSatoshi = Readable::read(r)?;
 		let minimum_depth: u32 = Readable::read(r)?;
 		let shared_delay: u16 = Readable::read(r)?;
 		let max_accepted_htlcs: u16 = Readable::read(r)?;
@@ -312,8 +373,8 @@ impl LengthReadable for AcceptChannel {
 
 		Ok(Self {
 			temporary_channel_id,
-			max_htlc_value_in_flight_msat,
-			htlc_minimum_msat,
+			max_htlc_value_in_flight,
+			htlc_minimum_value,
 			minimum_depth,
 			shared_delay,
 			max_accepted_htlcs,
@@ -329,8 +390,8 @@ impl LengthReadable for AcceptChannel {
 impl Writeable for AcceptChannel {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		self.temporary_channel_id.write(w)?;
-		self.max_htlc_value_in_flight_msat.write(w)?;
-		self.htlc_minimum_msat.write(w)?;
+		self.max_htlc_value_in_flight.write(w)?;
+		self.htlc_minimum_value.write(w)?;
 		self.minimum_depth.write(w)?;
 		self.shared_delay.write(w)?;
 		self.max_accepted_htlcs.write(w)?;

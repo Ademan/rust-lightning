@@ -1,6 +1,6 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
-use bitcoin::{absolute, Txid, Transaction, Amount};
+use bitcoin::{absolute, relative, Txid, Transaction, Amount};
 use bitcoin::constants::ChainHash;
 use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
@@ -16,14 +16,16 @@ use crate::chain::transaction::OutPoint;
 // :vomit_emoji:
 use crate::prelude::*;
 
+use crate::ln::eltoo::msgs::{self, AcceptChannel, ChannelMessageHandler, ChannelReady, ClosingSigned, FundingCreated, FundingSigned, OpenChannel, MilliSatoshi, Shutdown};
 use crate::ln::eltoo::chain;
+use crate::ln::eltoo::events::Event;
 use crate::ln::types::ChannelId;
-use crate::ln::channelmanager::{self, InterceptId, InboundChannelRequest, MonitorUpdateCompletionAction, RAAMonitorUpdateBlockingAction};
+use crate::ln::channelmanager::{self, InterceptId, MonitorUpdateCompletionAction, RAAMonitorUpdateBlockingAction};
 use crate::ln::inbound_payment;
 use crate::ln::outbound_payment::{
 	OutboundPayments,
 };
-use crate::ln::msgs::{self, MessageSendEvent, BaseMessageHandler};
+use crate::ln::msgs::{MessageSendEvent, BaseMessageHandler, UpdateAddHTLC, UpdateFulfillHTLC, UpdateFailHTLC, UpdateFailMalformedHTLC, AnnouncementSignatures, ErrorMessage, Init};
 use crate::chain::{BlockLocator, ChannelMonitorUpdateStatus, Confirm};
 use crate::chain::chaininterface::{ BroadcasterInterface, FeeEstimator, LowerBoundedFeeEstimator, };
 
@@ -48,32 +50,32 @@ use crate::util::wakers::{Future, Notifier};
 #[cfg(not(c_bindings))]
 use crate::routing::scoring::{ProbabilisticScorer, ProbabilisticScoringFeeParameters};
 
-struct MilliSatoshi(u64);
-
-impl MilliSatoshi {
-    pub fn from_msat(msat: u64) -> Self { Self(msat) }
-
-    pub fn to_amount(self) -> (Amount, MilliSatoshi) {
-        (
-            Amount::from_sat(self.0 / 1000),
-            Self(self.0 % 1000),
-        )
-    }
-
-    pub fn to_msat(self) -> u64 { self.0 }
+// XXX: Expect this to grow into something similar to [`MsgHandleErrorInternal`]
+struct ChannelErrorAction {
+	fail_channel: bool,
+	close_connection: bool,
 }
 
-struct ChannelFunding {
+impl ChannelErrorAction {
+	fn new() -> Self { Self { fail_channel: false, close_connection: false } }
+	fn fail_channel(self) -> Self { Self { fail_channel: true, close_connection: self.close_connection } }
+	fn close_connection(self) -> Self { Self { fail_channel: self.fail_channel, close_connection: true } }
+}
+
+pub struct ChannelFunding {
     transaction: Transaction,
     vout: usize,
 }
 
-struct ChannelParty {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelParty {
+    funding_pubkey: PublicKey,
     settlement_pubkey: PublicKey,
 
     balance: MilliSatoshi,
 
     pub max_htlc_value_in_flight: MilliSatoshi,
+    pub htlc_minimum_value: MilliSatoshi,
 
     pub max_accepted_htlcs: u16,
 
@@ -99,7 +101,7 @@ struct Htlc {
 const DUST_LIMIT: Amount = Amount::from_sat(330);
 
 struct ChannelConfig {
-    pub shared_delay: absolute::LockTime,
+    pub shared_delay: relative::Height,
 }
 
 struct FundedChannel {
@@ -120,6 +122,11 @@ enum ChannelPhase {
     Funded(FundedChannel),
 }
 
+struct InboundChannelRequest {
+	msg: OpenChannel,
+	ticks: u32,
+}
+
 struct Channel<SP: SignerProvider> {
     _phantom: PhantomData<SP>,
     phase: ChannelPhase,
@@ -130,12 +137,7 @@ pub(super) struct PeerState<SP: SignerProvider> {
 	///
 	/// Holds all channels where the peer is the counterparty.
 	pub(super) channel_by_id: HashMap<ChannelId, Channel<SP>>,
-	/// `temporary_channel_id` -> `InboundChannelRequest`.
-	///
-	/// Holds all unaccepted inbound channels where the peer is the counterparty.
-	/// If the channel is accepted, then the entry in this table is removed and a Channel is
-	/// created and placed in the `channel_by_id` table. If the channel is rejected, then
-	/// the entry is simply removed.
+
 	pub(super) inbound_channel_request_by_id: HashMap<ChannelId, InboundChannelRequest>,
 	latest_features: InitFeatures,
 	//pub(super) pending_msg_events: Vec<MessageSendEvent>,
@@ -238,9 +240,7 @@ pub struct ChannelManager<
 	#[cfg(not(test))]
 	forward_htlcs: Mutex<HashMap<HtlcId, Vec<channelmanager::HTLCForwardInfo>>>,
 
-	pending_intercepted_htlcs: Mutex<HashMap<InterceptId, channelmanager::PendingAddHTLCInfo>>,
-
-	decode_update_add_htlcs: Mutex<HashMap<HtlcId, Vec<msgs::UpdateAddHTLC>>>,
+	decode_update_add_htlcs: Mutex<HashMap<HtlcId, Vec<UpdateAddHTLC>>>,
 
 	// FIXME: Will be important soon
 	//claimable_payments: Mutex<ClaimablePayments>,
@@ -272,12 +272,11 @@ pub struct ChannelManager<
 	#[cfg(test)]
 	pub(crate) skip_monitor_update_assertion: AtomicBool,
 
-	// XXX: Implementation detail from vanilla ChannelManager, will evaluate if it makes sense to
-	// emulate
-	//#[cfg(not(any(test, feature = "_test_utils")))]
-	//pending_events: Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>,
-	//#[cfg(any(test, feature = "_test_utils"))]
-	//pub(crate) pending_events: Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>,
+	// TODO: in the vanilla ChannelManager the second item in the tuple is a continuation
+	#[cfg(not(any(test, feature = "_test_utils")))]
+	pending_events: Mutex<VecDeque<(Event, Option<()>)>>,
+	#[cfg(any(test, feature = "_test_utils"))]
+	pub(crate) pending_events: Mutex<VecDeque<(Event, Option<()>)>>,
 
 	//pending_events_processor: AtomicBool,
 
@@ -316,7 +315,7 @@ impl<
 	L: Logger,
 > BaseMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, L> {
     fn get_and_clear_pending_msg_events(&self) -> Vec<MessageSendEvent> {
-        todo!()
+		todo!()
     }
 
     fn peer_disconnected(&self, their_node_id: PublicKey) {
@@ -331,9 +330,10 @@ impl<
         todo!()
     }
 
-    fn peer_connected(&self, their_node_id: PublicKey, msg: &msgs::Init, inbound: bool)
-		    -> Result<(), ()> {
-        todo!()
+    fn peer_connected(&self, their_node_id: PublicKey, msg: &Init, inbound: bool) -> Result<(), ()> {
+		let mut per_peer_state = self.per_peer_state.write().unwrap();
+
+		todo!()
     }
 }
 
@@ -346,49 +346,61 @@ impl<
 	F: FeeEstimator,
 	R: Router,
 	L: Logger,
-> super::ChannelMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, L> {
-    fn handle_open_channel_eltoo(&self, their_node_id: PublicKey, msg: &super::OpenChannel) {
+> ChannelMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, L> {
+    fn handle_open_channel_eltoo(&self, their_node_id: PublicKey, msg: &OpenChannel) {
+		match self.internal_open_channel(their_node_id, msg) {
+			Ok(_) => todo!(),
+			Err(_) => {
+				// TOOD: log error
+				self.fail_channel(their_node_id, msg.temporary_channel_id);
+			}
+		}
+    }
+
+    fn handle_accept_channel_eltoo(&self, their_node_id: PublicKey, msg: &AcceptChannel) {
+		match self.internal_accept_channel(their_node_id, msg) {
+			Ok(_) => todo!(),
+			Err(_) => {
+				// TOOD: log error
+				self.fail_channel(their_node_id, msg.temporary_channel_id);
+			}
+		}
+    }
+
+    fn handle_funding_created_eltoo(&self, their_node_id: PublicKey, msg: &FundingCreated) {
         todo!()
     }
 
-    fn handle_accept_channel_eltoo(&self, their_node_id: PublicKey, msg: &super::AcceptChannel) {
+    fn handle_funding_signed_eltoo(&self, their_node_id: PublicKey, msg: &FundingSigned) {
         todo!()
     }
 
-    fn handle_funding_created_eltoo(&self, their_node_id: PublicKey, msg: &super::FundingCreated) {
+    fn handle_channel_ready_eltoo(&self, their_node_id: PublicKey, msg: &ChannelReady) {
         todo!()
     }
 
-    fn handle_funding_signed_eltoo(&self, their_node_id: PublicKey, msg: &super::FundingSigned) {
+    fn handle_shutdown_eltoo(&self, their_node_id: PublicKey, msg: &Shutdown) {
         todo!()
     }
 
-    fn handle_channel_ready_eltoo(&self, their_node_id: PublicKey, msg: &super::ChannelReady) {
+    fn handle_closing_signed_eltoo(&self, their_node_id: PublicKey, msg: &ClosingSigned) {
         todo!()
     }
 
-    fn handle_shutdown_eltoo(&self, their_node_id: PublicKey, msg: &super::Shutdown) {
+    fn handle_update_add_htlc(&self, their_node_id: PublicKey, msg: &UpdateAddHTLC) {
         todo!()
     }
 
-    fn handle_closing_signed_eltoo(&self, their_node_id: PublicKey, msg: &super::ClosingSigned) {
+    fn handle_update_fulfill_htlc(&self, their_node_id: PublicKey, msg: UpdateFulfillHTLC) {
         todo!()
     }
 
-    fn handle_update_add_htlc(&self, their_node_id: PublicKey, msg: &msgs::UpdateAddHTLC) {
-        todo!()
-    }
-
-    fn handle_update_fulfill_htlc(&self, their_node_id: PublicKey, msg: msgs::UpdateFulfillHTLC) {
-        todo!()
-    }
-
-    fn handle_update_fail_htlc(&self, their_node_id: PublicKey, msg: &msgs::UpdateFailHTLC) {
+    fn handle_update_fail_htlc(&self, their_node_id: PublicKey, msg: &UpdateFailHTLC) {
         todo!()
     }
 
     fn handle_update_fail_malformed_htlc(
-		    &self, their_node_id: PublicKey, msg: &msgs::UpdateFailMalformedHTLC,
+		    &self, their_node_id: PublicKey, msg: &UpdateFailMalformedHTLC,
 	    ) {
         todo!()
     }
@@ -402,7 +414,7 @@ impl<
     }
 
     fn handle_announcement_signatures(
-		    &self, their_node_id: PublicKey, msg: &msgs::AnnouncementSignatures,
+		    &self, their_node_id: PublicKey, msg: &AnnouncementSignatures,
 	    ) {
         todo!()
     }
@@ -411,7 +423,10 @@ impl<
         todo!()
     }
 
-    fn handle_error(&self, their_node_id: PublicKey, msg: &msgs::ErrorMessage) {
+    fn handle_error(&self, their_node_id: PublicKey, msg: &ErrorMessage) {
+		if !msg.channel_id.is_zero() {
+
+		}
         todo!()
     }
 
@@ -422,6 +437,85 @@ impl<
     fn message_received(&self) {
         todo!()
     }
+}
+
+impl<
+	M: chain::Watch,
+	T: BroadcasterInterface,
+	ES: EntropySource,
+	NS: NodeSigner,
+	SP: SignerProvider,
+	F: FeeEstimator,
+	R: Router,
+	L: Logger,
+> ChannelManager<M, T, ES, NS, SP, F, R, L> {
+	fn internal_open_channel(&self, counterparty_node_id: PublicKey, msg: &super::OpenChannel) -> Result<(), ChannelErrorAction> {
+        let funding_msat: MilliSatoshi = msg.funding_amount.try_into()
+			.map_err(|_| ChannelErrorAction::new().fail_channel())?;
+
+        let remote_msat = funding_msat.checked_sub(msg.push_value)
+			.ok_or(ChannelErrorAction::new().fail_channel())?;
+
+		// Channel type is required
+		let channel_type = msg.channel_type
+			.clone()
+			.ok_or(ChannelErrorAction::new().fail_channel())?;
+
+        let remote_channel_party_config = ChannelParty {
+            funding_pubkey: msg.funding_pubkey,
+            settlement_pubkey: msg.settlement_pubkey,
+            balance: remote_msat,
+            max_htlc_value_in_flight: msg.max_htlc_value_in_flight,
+            htlc_minimum_value: msg.htlc_minimum_value,
+            max_accepted_htlcs: msg.max_accepted_htlcs,
+            last_nonce: Some((0, msg.next_nonce)),
+        };
+
+		let mut pending_events = self.pending_events.lock().unwrap();
+		pending_events.push_back(
+			(
+				Event::OpenChannelRequest {
+					temporary_channel_id: msg.temporary_channel_id,
+					counterparty_node_id,
+					funding_satoshis: msg.funding_amount,
+					channel_type,
+					max_htlc_value_in_flight: msg.max_htlc_value_in_flight,
+					htlc_minimum_value: msg.htlc_minimum_value,
+					shared_delay: msg.shared_delay,
+					max_accepted_htlcs: msg.max_accepted_htlcs,
+					remote_channel_party_config,
+				},
+				None
+			)
+		);
+
+		Ok(())
+	}
+
+	fn internal_accept_channel(&self, their_node_id: PublicKey, channel_id: ChannelId) -> Result<(), ChannelErrorAction> {
+		let mut per_peer_state = self.per_peer_state.write().unwrap();
+
+		let mut peer_state = per_peer_state.get_mut(&their_node_id)
+			.ok_or(ChannelErrorAction::new().close_connection())?;
+
+		todo!()
+	}
+
+	fn fail_channel(&self, their_node_id: PublicKey, channel_id: ChannelId) {
+		todo!("fail channel");
+	}
+
+	fn close_channel(&self, channel_id: ChannelId) {
+
+	}
+
+	fn accept_channel(&self, temporary_channel_id: ChannelId, counterparty_node_id: PublicKey, user_channel_id: u128) -> Result<(), ()> {
+		todo!()
+	}
+
+	fn open_channel(&self, their_node_id: PublicKey, amount: Amount, push_amount: MilliSatoshi) -> Result<(), ()> {
+		todo!()
+	}
 }
 
 #[cfg(not(c_bindings))]
